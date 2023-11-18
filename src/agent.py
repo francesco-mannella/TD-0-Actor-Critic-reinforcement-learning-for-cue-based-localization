@@ -7,11 +7,12 @@ import matplotlib.pyplot as plt
 
 #device to run model on 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu"
 
 class Actor(torch.nn.Module):
     def __init__(self, input_size):
         super(Actor, self).__init__()
-        self.fc = torch.nn.Linear(input_size, 4)
+        self.fc = torch.nn.Linear(input_size, 2)
         
     def forward(self, x):
         x = self.fc(x)
@@ -26,15 +27,15 @@ class Evaluator(torch.nn.Module):
         x = self.fc(x)
         return x
 
-def select_action(network, state):
+def select_action(network, state, noise_sigma):
     ''' Selects an action given state
     Args:
     - network (Pytorch Model): neural network used in forward pass
     - state (Array): environment state
     
     Return:
-    - action.item() (float): continuous action
-    - log_action (float): log of probability density of action
+    - action.items (Array): continuous action
+    - noise (Array): noise added to get stochastic action 
     
     '''
     
@@ -43,18 +44,17 @@ def select_action(network, state):
     state_tensor.required_grad = True
     
     #forward pass through network
-    action_parameters = network(state_tensor)
+    action_mean = network(state_tensor)
     
-    #get mean and std, get normal distribution
-    mu, sigma = action_parameters[:, :2], torch.exp(action_parameters[:, 2:])
-    m = Normal(mu, sigma)
+    #get normal distribution
+    m = Normal(action_mean, noise_sigma)
 
     #sample action, get log probability
     action = m.sample()
-    log_action = m.log_prob(action)
-    action_items = action.detach().numpy().ravel()
+    noise = action - action_mean
+    action_items = action.cpu().detach().numpy().ravel()
 
-    return action_items, log_action
+    return action_items, noise
 
 def get_value(network, state):
     ''' Gives a value given state
@@ -82,7 +82,7 @@ class FakeArena:
         self.reset()
 
     def reset(self):
-        self.state = 0.1*np.random.uniform(-1,1, 2)
+        self.state = np.array([0.2, 0.2]) # 0.1*np.random.uniform(-1,1, 2)
         self.direction = 2*np.pi*np.random.uniform(-1, 1)
 
     def step(self, action):
@@ -91,7 +91,7 @@ class FakeArena:
         speed = np.exp(speed) 
         speed *= 0.01
         
-        self.direction += 0.3*direction 
+        self.direction += 0.4*direction 
         self.state += speed*np.hstack([np.cos(self.direction), np.sin(self.direction)])
         reward = 1*(np.linalg.norm(self.state) < 0.01)
         return self.state, reward
@@ -100,21 +100,23 @@ class FakeArena:
 
 if __name__ == "__main__":
 
-    epochs = 100000
+    episodes = 500
     N = 2
-    stime = 20
-    lr = 0.001
+    stime = 40
+    lr = 0.01
     gamma = 0.99
+    I_init = 1
+    noise_sigma_init = 0.1
     plotting = False
 
-    history = {"episodes": np.zeros([epochs, stime, 2]), "timesteps": stime*np.ones(epochs)}
+    history = {"episodes": np.zeros([episodes, stime, 2]), "scores": np.zeros(episodes)}
 
     # create environment
     arena = FakeArena()
 
     # create perceptron
-    actor = Actor(N)
-    evaluator = Evaluator(N)
+    actor = Actor(N).to(DEVICE)
+    evaluator = Evaluator(N).to(DEVICE)
 
     # Define the optimizer
     ActorOptimizer = torch.optim.SGD(actor.parameters(), lr=lr)
@@ -135,30 +137,32 @@ if __name__ == "__main__":
         ax.add_patch(preward)
 
     # Train the model
-    for epoch in range(epochs):
-
-        arena.reset()
-        # actor.noise = noise*np.exp(-epoch/epochs)
-
-        state, reward = arena.step([0, 0])
-        value = get_value(evaluator, state)
+    for episode in range(episodes):
         
+        noise_sigma = noise_sigma_init*np.exp(-episode/episodes)
+        I = I_init*np.exp(-episode/episodes)
+
+        score = 0
+        arena.reset()
+        state, reward = arena.step([0, 0])
         for t in range(stime):
             
-            prev_value = value
+            prev_value = get_value(evaluator, state)
 
             # Forward pass
-            action, logprob = select_action(actor, state)
+            action, noise = select_action(actor, state, noise_sigma)
             state, reward = arena.step(action)
+
             value = get_value(evaluator, state)
+            if t == stime - 1: value *= 0
             
             discounted_curr_value = reward + gamma*value 
             td = discounted_curr_value - prev_value
 
-            policy_loss = -td*torch.sum(logprob) 
-            value_loss = mse_loss(discounted_curr_value, value) 
+            policy_loss = I*td*torch.mean(noise**2)
+            value_loss = I*mse_loss(discounted_curr_value, value) 
             
-            history["episodes"][epoch, t, :] = arena.state.copy()
+            history["episodes"][episode, t, :] = arena.state.copy()
             
             # Backward pass
             policy_loss.backward(retain_graph=True)
@@ -180,13 +184,13 @@ if __name__ == "__main__":
                         np.cos(arena.direction), 
                         np.sin(arena.direction)])
                     ]).T)
-                history["episodes"][epoch, :t].shape
-                agent_path.set_data(*history["episodes"][epoch, :t].T)
+                history["episodes"][episode, :t].shape
+                agent_path.set_data(*history["episodes"][episode, :t].T)
                 ts.set_text(f"ts: {t}")
                 plt.pause(0.0001)
 
             if reward > 0: 
-                history["timesteps"][epoch] = t
+                history["scores"][episode] += 1
                 if plotting: plt.pause(0.1)
-                break
-        print(epoch, history["timesteps"][epoch])
+
+        print(episode, history["scores"][episode])
