@@ -12,7 +12,7 @@ DEVICE = "cpu"
 class Actor(torch.nn.Module):
     def __init__(self, input_size):
         super(Actor, self).__init__()
-        self.fc = torch.nn.Linear(input_size, 2)
+        self.fc = torch.nn.Linear(input_size, 4)
         
     def forward(self, x):
         x = self.fc(x)
@@ -27,7 +27,7 @@ class Evaluator(torch.nn.Module):
         x = self.fc(x)
         return x
 
-def select_action(network, state, noise_sigma):
+def select_action(network, state):
     ''' Selects an action given state
     Args:
     - network (Pytorch Model): neural network used in forward pass
@@ -40,12 +40,14 @@ def select_action(network, state, noise_sigma):
     '''
     
     #create state tensor
-    state_tensor = torch.from_numpy(state).float().unsqueeze(0).to(DEVICE)
+    state_tensor = torch.from_numpy(state.copy()).float().unsqueeze(0).to(DEVICE)
     state_tensor.required_grad = True
     
     #forward pass through network
-    action_mean = network(state_tensor)
+    action_parameters = network(state_tensor)
     
+    action_mean = action_parameters[:,:2]
+    noise_sigma = torch.exp(action_parameters[:,2:])
     #get normal distribution
     m = Normal(action_mean, noise_sigma)
 
@@ -67,7 +69,7 @@ def get_value(network, state):
     
     '''
     #create state tensor
-    state_tensor = torch.from_numpy(state).float().unsqueeze(0).to(DEVICE)
+    state_tensor = torch.from_numpy(state.copy()).float().unsqueeze(0).to(DEVICE)
     state_tensor.required_grad = True
     
     #forward pass through network
@@ -79,35 +81,35 @@ class FakeArena:
 
     def __init__(self):
 
+        self.reward_radius = 0.04
         self.reset()
 
     def reset(self):
-        self.state = np.array([0.2, 0.2]) # 0.1*np.random.uniform(-1,1, 2)
-        self.direction = 2*np.pi*np.random.uniform(-1, 1)
+        self.state = np.array([0.1, 0.1]) # 0.1*np.random.uniform(-1,1, 2)
+        self.direction = 1.*np.pi# 2*np.pi*np.random.uniform(-1, 1)
 
     def step(self, action):
 
         speed, direction = action
-        speed = np.exp(speed) 
-        speed *= 0.01
+        speed = 0.03*np.tanh(np.exp(speed)) 
         
-        self.direction += 0.4*direction 
+        self.direction += 1*(4*np.pi*np.tanh(direction) -self.direction)
         self.state += speed*np.hstack([np.cos(self.direction), np.sin(self.direction)])
-        reward = 1*(np.linalg.norm(self.state) < 0.01)
+        reward = 1*(np.linalg.norm(self.state) < self.reward_radius)
         return self.state, reward
 
 # %%
 
 if __name__ == "__main__":
 
-    episodes = 500
+    episodes = 2000
     N = 2
     stime = 40
-    lr = 0.01
+    lr = 0.06
     gamma = 0.99
     I_init = 1
     noise_sigma_init = 0.1
-    plotting = False
+    plotting = True
 
     history = {"episodes": np.zeros([episodes, stime, 2]), "scores": np.zeros(episodes)}
 
@@ -133,14 +135,13 @@ if __name__ == "__main__":
         agent_nose, = ax.plot([0, nose_length], [0, 0], c="black") 
         agent_path, = ax.plot([0, 0], [0, 0], c="black")
         ts = ax.text(.3, .3, "ts: 0")
-        preward = plt.Circle((0, 0), 0.01, color="green", zorder=0)
+        preward = plt.Circle((0, 0), arena.reward_radius, color="green", zorder=0)
         ax.add_patch(preward)
 
     # Train the model
     for episode in range(episodes):
         
-        noise_sigma = noise_sigma_init*np.exp(-episode/episodes)
-        I = I_init*np.exp(-episode/episodes)
+        I = I_init*np.exp(-5*episode/episodes)
 
         score = 0
         arena.reset()
@@ -150,7 +151,7 @@ if __name__ == "__main__":
             prev_value = get_value(evaluator, state)
 
             # Forward pass
-            action, noise = select_action(actor, state, noise_sigma)
+            action, noise = select_action(actor, state)
             state, reward = arena.step(action)
 
             value = get_value(evaluator, state)
@@ -175,7 +176,7 @@ if __name__ == "__main__":
             ActorOptimizer.step()
             EvaluatorOptimizer.step()
 
-            if plotting:
+            if plotting and episode%50==0:
                 agent_pos.set_offsets(arena.state)
                 agent_nose.set_data(np.vstack([
                     arena.state,
@@ -189,8 +190,10 @@ if __name__ == "__main__":
                 ts.set_text(f"ts: {t}")
                 plt.pause(0.0001)
 
+                if reward > 0: 
+                    if plotting: plt.pause(0.1)
+
             if reward > 0: 
                 history["scores"][episode] += 1
-                if plotting: plt.pause(0.1)
 
         print(episode, history["scores"][episode])

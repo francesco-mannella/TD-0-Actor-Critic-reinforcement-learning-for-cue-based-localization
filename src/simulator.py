@@ -1,6 +1,12 @@
 import numpy as np
 from shapely import Polygon, LineString, Point
 
+# import matplotlib library
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+import mkvideo
+import copy
+
 
 class ArenaEnv:
     def __init__(
@@ -39,11 +45,15 @@ class ArenaEnv:
         self.retina_pov_horizon = retina_pov_horizon
         self.retina_scale = retina_scale
 
-        self.agent_position = np.array((0.0, 0.0))
         self.agent_height = agent_height
         self.agent_view_angle = agent_view_angle
         self.agent_pov_dist = agent_pov_dist
-        self.agent_direction = 0
+        self.agent_radius = 0.2
+
+        self.reset()
+
+        self.reward = np.array([0, 0])
+        self.reward_radius = 0.2
 
         # Calculate the wall view angle
         wall_view_angle = 2 * np.pi / self.num_walls
@@ -68,9 +78,29 @@ class ArenaEnv:
             ]
         )
 
-    def reset(self):
+        self.vars = [v for v in self.__dict__]
+
+    def copy(self, other):
+        """Copy the values of the other object to this object.
+
+        Parameters
+        ----------
+        self : object
+            The object to copy to.
+        other : object
+            The object to copy from.
+        """
+        for vname in self.vars:
+            self.__dict__[vname] = copy.copy(other.__dict__[vname])
+
+    def reset(self, position=None, direction=None):
         """Reset the environment."""
-        pass
+
+        self.agent_position = (
+            position if position is not None else np.array((0.0, 0.0))
+        )
+        self.agent_direction = direction if direction is not None else 0.0
+        self.position_history = np.ones([60, 2]) * self.agent_position
 
     def find_angle(self, p1, p2):
         """
@@ -103,12 +133,14 @@ class ArenaEnv:
 
         # Update the agent's position, but only if it is not beyond the walls
 
+        speed = 0.05 * np.exp(speed)
         new_direction = self.agent_direction + direction
-        new_position = self.agent_position + speed*np.array([
-            np.cos(new_direction), np.sin(new_direction)])
+        new_position = self.agent_position + speed * np.array(
+            [np.cos(new_direction), np.sin(new_direction)]
+        )
         if self.walls.contains(Point(new_position)):
-            self.agent_direction = new_direction
-            self.agent_position[:] = new_position.copy()
+            self.agent_position = new_position.copy()
+        self.agent_direction = new_direction
 
         # update the agent's direction
         self.agent_direction = self.agent_direction % (2 * np.pi)
@@ -232,8 +264,17 @@ class ArenaEnv:
         for e in edges_in_retina:
             self.retina[:, e] = 1 * inner_wall[:, e]
 
-        # Return the updated retina
-        return self.retina[::-1]
+        rew = Point(*self.reward).buffer(self.reward_radius)
+        agent = Point(*self.agent_position).buffer(self.agent_radius)
+        reward = 1.0 * agent.exterior.crosses(rew.exterior)
+
+        self.position_history = np.vstack(
+            [self.position_history[1:], self.agent_position.copy()]
+        )
+
+        # Return the updated retina and reward
+        return self.retina[::-1].reshape(-1), reward
+
 
 class GraphArena(ArenaEnv):
     """Class for creating a graphical representation of the environment"""
@@ -241,7 +282,7 @@ class GraphArena(ArenaEnv):
     def __init__(self, *args, **kargs):
         """Initialize the graphical representation of the environment"""
         super(GraphArena, self).__init__(*args, **kargs)
-        self.fig, self.axes = plt.subplots(2, 1, figsize=(6, 8))
+        self.fig, self.axes = plt.subplots(2, 1, figsize=(3, 4))
         self.g_retina = self.axes[0].imshow(
             np.zeros(self.retina_dims), cmap=plt.cm.binary, vmin=0, vmax=1
         )
@@ -249,15 +290,36 @@ class GraphArena(ArenaEnv):
 
         self.axes[1].set_axis_off()
         self.axes[1].set_aspect('equal')
-        self.g_walls, = self.axes[1].plot(*self.walls.exterior.xy, c="black", lw=2)
-        self.g_agent = self.axes[1].scatter(0, 0, s=100, c='#888')
-        (self.g_agent_nose,) = self.axes[1].plot([0, 0.01], [0, 0], c='black')
+        (self.g_walls,) = self.axes[1].plot(
+            *self.walls.exterior.xy, c='black', lw=2
+        )
+        self.g_agent = Circle(
+                self.agent_position, 
+                self.agent_radius, 
+                fc='#fff', ec='#000', 
+                zorder=2
+        )
+        self.axes[1].add_patch(self.g_agent)
+        (self.g_hist,) = self.axes[1].plot(
+            *self.position_history.T, c='black', lw=0.5, zorder=1
+        )
+        (self.g_agent_nose,) = self.axes[1].plot(
+            [0, 0.01], [0, 0], c='black', zorder=2
+        )
+        self.g_reward = Circle(self.reward, self.reward_radius, zorder=-1)
+        self.axes[1].add_patch(self.g_reward)
+
+    def close(self):
+        
+        plt.close(self.fig)
+
 
     def step(self, *args, **kargs):
+
         """Step the environment and update the graphical representation"""
-        super(GraphArena, self).step(*args, **kargs)
-        self.g_retina.set_data(0.2 + 0.8*self.retina)
-        self.g_agent.set_offsets(self.agent_position.reshape(1, -1))
+        ret = super(GraphArena, self).step(*args, **kargs)
+        self.g_retina.set_data(0.2 + 0.8 * self.retina)
+        self.g_agent.center = self.agent_position
 
         # Calculate the position of the agent's nose
         nose = self.agent_position + np.stack(
@@ -273,12 +335,13 @@ class GraphArena(ArenaEnv):
             ]
         )
         self.g_agent_nose.set_data(*nose.T)
+        self.g_hist.set_data(*self.position_history.T)
+        plt.pause(0.001)
+
+        return ret
+
 
 if __name__ == '__main__':
-
-    # import matplotlib library
-    import matplotlib.pyplot as plt
-    import mkvideo
 
     # close all existing plots
     plt.close('all')
@@ -290,9 +353,9 @@ if __name__ == '__main__':
     arena = GraphArena()
 
     # loop through time from 0 to 4*pi with 800 steps
-    for t in np.linspace(0, 4*np.pi, 80000):
+    for t in np.linspace(0, 40 * np.pi, 1000):
         # step the arena with parameters 0.015 and 0.01*(2*np.cos(t)-1)
-        r = arena.step(0.015, 0.01*(2*np.cos(t)-1))
+        state, reward = arena.step(2*np.cos(t), t)
         # pause for 0.01 seconds
         plt.pause(0.01)
 
