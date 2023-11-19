@@ -279,9 +279,13 @@ class ArenaEnv:
 class GraphArena(ArenaEnv):
     """Class for creating a graphical representation of the environment"""
 
-    def __init__(self, *args, **kargs):
+    def __init__(self, offline=True, *args, **kargs):
         """Initialize the graphical representation of the environment"""
+
         super(GraphArena, self).__init__(*args, **kargs)
+
+        self.offline = offline
+
         self.fig, self.axes = plt.subplots(2, 1, figsize=(3, 4))
         self.g_retina = self.axes[0].imshow(
             np.zeros(self.retina_dims), cmap=plt.cm.binary, vmin=0, vmax=1
@@ -309,15 +313,22 @@ class GraphArena(ArenaEnv):
         self.g_reward = Circle(self.reward, self.reward_radius, zorder=-1)
         self.axes[1].add_patch(self.g_reward)
 
+        self.vm = mkvideo.vidManager(self.fig,"episode", ".", 50)
+
     def close(self):
         
+        if self.offline:
+            self.vm.mk_video()
+
         plt.close(self.fig)
 
 
     def step(self, *args, **kargs):
 
         """Step the environment and update the graphical representation"""
+
         ret = super(GraphArena, self).step(*args, **kargs)
+
         self.g_retina.set_data(0.2 + 0.8 * self.retina)
         self.g_agent.center = self.agent_position
 
@@ -336,7 +347,11 @@ class GraphArena(ArenaEnv):
         )
         self.g_agent_nose.set_data(*nose.T)
         self.g_hist.set_data(*self.position_history.T)
-        plt.pause(0.001)
+
+        if self.offline:
+            self.vm.save_frame()
+        else:
+            plt.pause(0.001)
 
         return ret
 
@@ -357,7 +372,6 @@ if __name__ == '__main__':
         # step the arena with parameters 0.015 and 0.01*(2*np.cos(t)-1)
         state, reward = arena.step(2*np.cos(t), t)
         # pause for 0.01 seconds
-        plt.pause(0.01)
 
     # close all plots
-    plt.close('all')
+    arena.close()
