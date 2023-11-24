@@ -77,31 +77,35 @@ lr = 0.002
 actor = Actor(N, 2, symmetry=(1, 0)).to(DEVICE)
 evaluator = Evaluator(N).to(DEVICE)
 
-actor.load_state_dict(torch.load("actor_params")())
-evaluator.load_state_dict(torch.load("evaluator_params")())
+actor.load_state_dict(torch.load("actor_params", map_location=DEVICE)())
+evaluator.load_state_dict(torch.load("evaluator_params", map_location=DEVICE)())
 
 # %%
 
 # Initialize simulation
 arena = create_or_switch_environment(arena)
-c_state = arena.reset(*set_position_an_direction())
+if type(arena) == GraphArena: arena.offline = False
 
-# Time step loop
-for t in range(stime):
-    
-    # Convert current state to torch tensor
-    state = torch.tensor(c_state.reshape(1, -1)).float().to(DEVICE)
-         
-    # Perform action selection using the actor network
-    action, action_mean, action_std = action_selection(actor, state)
-    
-    # Update the current state based on the action
-    c_state, reward = arena.step(*action)
+for episode in range(20):
+
+    c_state = arena.reset(*set_position_an_direction())
+
+    # Time step loop
+    for t in range(stime):
+        
+        # Convert current state to torch tensor
+        state = torch.tensor(c_state.reshape(1, -1)).float().to(DEVICE)
+            
+        # Perform action selection using the actor network
+        action, action_mean, action_std = action_selection(actor, state)
+        
+        # Update the current state based on the action
+        c_state, reward = arena.step(*action)
 
 
-    state.detach()
+        state.detach()
 
-    if reward > 0:
-        break
+        if reward > 0:
+            break
 
 

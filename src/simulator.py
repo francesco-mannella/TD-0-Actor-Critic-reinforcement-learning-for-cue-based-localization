@@ -372,7 +372,7 @@ class GraphArena(ArenaEnv):
         if self.offline:
             self.vm.save_frame()
         else:
-            plt.pause(0.01)
+            plt.pause(0.1)
 
         return ret
 
