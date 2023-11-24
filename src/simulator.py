@@ -50,7 +50,6 @@ class ArenaEnv:
         self.agent_pov_dist = agent_pov_dist
         self.agent_radius = 0.2
 
-        self.reset()
 
         self.reward = np.array([0, 0])
         self.reward_radius = 0.2
@@ -67,8 +66,8 @@ class ArenaEnv:
         # Adjust the angles to center the walls
         angles -= wall_view_angle / 2
 
-        # Generate the wall coordinates based on the angles
-        self.walls = Polygon(
+        # Generate the collisiom wall coordinates based on the angles
+        self.collision_walls = Polygon(
             [
                 [
                     self.wall_dist * np.cos(a),
@@ -77,8 +76,20 @@ class ArenaEnv:
                 for a in angles
             ]
         )
+        # Generate the wall coordinates based on the angles
+        self.walls = Polygon(
+            [
+                [
+                    1.4 * self.wall_dist * np.cos(a),
+                    1.4 * self.wall_dist * np.sin(a),
+                ]
+                for a in angles
+            ]
+        )
 
         self.vars = [v for v in self.__dict__]
+        
+        self.reset()
 
     def copy(self, other):
         """Copy the values of the other object to this object.
@@ -102,20 +113,23 @@ class ArenaEnv:
         self.agent_direction = direction if direction is not None else 0.0
         self.position_history = np.ones([60, 2]) * self.agent_position
 
+        self.calculate_retina()
+
+        return self.retina[::-1].reshape(-1)
+
     def find_angle(self, p1, p2):
         """
         Calculate the angle between two points.
 
         Args:
-            p1 (tuple): The coordinates of the first point (x1, y1).
-            p2 (tuple): The coordinates of the second point (x2, y2).
+            p1 (np.ndarray): The coordinates of the first point (x1, y1) as a 2D array.
+            p2 (np.ndarray): The coordinates of the second point (x2, y2) as a 2D array.
 
         Returns:
-            float: The angle between the two points in radians.
+            np.ndarray: The angles between the two points in radians.
         """
-        (x1, y1), (x2, y2) = p1, p2
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = p2[:, 0] - p1[:, 0]
+        dy = p2[:, 1] - p1[:, 1]
         angle_rad = np.arctan2(dy, dx)
         angle_rad %= 2 * np.pi
         return angle_rad
@@ -132,28 +146,41 @@ class ArenaEnv:
         """
 
         # Update the agent's position, but only if it is not beyond the walls
-
-        speed = 0.05 * np.exp(speed)
+        speed = np.maximum(0, speed)
         new_direction = self.agent_direction + direction
         new_position = self.agent_position + speed * np.array(
             [np.cos(new_direction), np.sin(new_direction)]
         )
-        if self.walls.contains(Point(new_position)):
+        if self.collision_walls.contains(Point(new_position)):
             self.agent_position = new_position.copy()
         self.agent_direction = new_direction
 
         # update the agent's direction
         self.agent_direction = self.agent_direction % (2 * np.pi)
+        
+        self.calculate_retina()
+
+        rew = Point(*self.reward).buffer(self.reward_radius)
+        agent = Point(*self.agent_position).buffer(self.agent_radius)
+        reward = 1.0 * agent.exterior.crosses(rew.exterior)
+
+        self.position_history = np.vstack(
+            [self.position_history[1:], self.agent_position.copy()]
+        )
+
+        # Return the updated retina and reward
+        return self.retina[::-1].reshape(-1), reward
+
+    def close(self):
+        pass
+
+    def calculate_retina(self):
         angle_increment = self.agent_view_angle / self.retina_dims[1]
 
+        
         # This code block calculates the angles between the agent's current
         # position and each edge of the walls.
-        agent_edge_directions = np.array(
-            [
-                self.find_angle(self.agent_position, edge)
-                for edge in np.array(self.walls.exterior.xy).T[:-1]
-            ]
-        )
+        agent_edge_directions = self.find_angle(self.agent_position.reshape(1, -1), np.array(self.walls.exterior.xy).T[:-1])
         agent_edge_directions -= angle_increment
         agent_edge_directions %= 2 * np.pi
 
@@ -167,7 +194,7 @@ class ArenaEnv:
             + angle_increment / 2
             + self.agent_direction
         )
-        max_fov_distance = 2 * self.wall_dist
+        max_fov_distance = 10 * self.wall_dist
 
         # Compute the coordinates of all rays
         ray_directions = np.column_stack(
@@ -242,7 +269,7 @@ class ArenaEnv:
         # Determine the edges by checking if the lower bound is less than the
         # agent edge direction and if the agent edge direction is less than the
         # upper bound
-        edges = (lb < ad) & (ad < ub)
+        edges = np.logical_and(lb < ad, ad < ub)
 
         # Get the indices of the edges in the retina array
         edges_in_retina = np.where(edges)[0]
@@ -257,24 +284,11 @@ class ArenaEnv:
 
         # Determine the inner wall boundaries by checking if the column index
         # is within the boundaries
-        inner_wall = (b < col) & (col < h)
+        inner_wall = np.logical_and(b < col, col < h)
 
         # Set the values of the retina array to 1 where there are edges in the
         # inner wall
-        for e in edges_in_retina:
-            self.retina[:, e] = 1 * inner_wall[:, e]
-
-        rew = Point(*self.reward).buffer(self.reward_radius)
-        agent = Point(*self.agent_position).buffer(self.agent_radius)
-        reward = 1.0 * agent.exterior.crosses(rew.exterior)
-
-        self.position_history = np.vstack(
-            [self.position_history[1:], self.agent_position.copy()]
-        )
-
-        # Return the updated retina and reward
-        return self.retina[::-1].reshape(-1), reward
-
+        self.retina[:, edges_in_retina] = 1 * inner_wall[:, edges_in_retina]
 
 class GraphArena(ArenaEnv):
     """Class for creating a graphical representation of the environment"""
@@ -317,11 +331,18 @@ class GraphArena(ArenaEnv):
 
     def close(self):
         
-        if self.offline:
-            self.vm.mk_video()
-
         plt.close(self.fig)
 
+    def reset(self, *args, **kargs):
+    
+        if hasattr(self, "offline"):
+            if self.offline:
+                if len(self.vm.frames) > 0:
+                    self.vm.mk_video()
+                    self.vm.frames = []
+
+        return super(GraphArena, self).reset(*args, **kargs)
+        
 
     def step(self, *args, **kargs):
 
@@ -351,7 +372,7 @@ class GraphArena(ArenaEnv):
         if self.offline:
             self.vm.save_frame()
         else:
-            plt.pause(0.001)
+            plt.pause(0.01)
 
         return ret
 
@@ -365,12 +386,12 @@ if __name__ == '__main__':
     plt.ion()
 
     # create GraphArena object
-    arena = GraphArena()
+    arena = GraphArena(False)
 
     # loop through time from 0 to 4*pi with 800 steps
-    for t in np.linspace(0, 40 * np.pi, 1000):
+    for t in np.linspace(0, 4 * np.pi, 10):
         # step the arena with parameters 0.015 and 0.01*(2*np.cos(t)-1)
-        state, reward = arena.step(2*np.cos(t), t)
+        state, reward = arena.step(np.cos(t), t)
         # pause for 0.01 seconds
 
     # close all plots

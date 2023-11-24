@@ -1,199 +1,222 @@
-import sys
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import sys, os
 import torch
 from torch.distributions import Normal
-from  torch.nn.functional import mse_loss
-import numpy as np
-import matplotlib.pyplot as plt
+from torch.nn.functional import mse_loss
 
 #device to run model on 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEVICE = "cpu"
 
 class Actor(torch.nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, output_size, symmetry=None, sigma_ampl=0.1):
+        """
+        Initialize the Actor class.
+        
+        Args:
+            input_size (int): The size of the input.
+            output_size (int): The size of the output.
+            symmetry (ndarray or None, optional): The symmetry values. Defaults to None.
+            sigma_ampl (float, optional): The sigma amplification factor. Defaults to 0.1.
+        """
         super(Actor, self).__init__()
-        self.fc = torch.nn.Linear(input_size, 4)
+        self.output_size = output_size
+        self.sigma_ampl = sigma_ampl
+        self.symmetry = symmetry
+        self.idcs = np.arange(self.output_size, dtype=int)
+        if symmetry is None:
+            symmetry = np.ones(self.output_size)
+        self.nsim_idcs = self.idcs[symmetry == 0]
+        self.sim_idcs = self.idcs[symmetry == 1]
+
+        self.layer = torch.nn.Linear(input_size, 2*output_size)
+        self.layer.weight.data.fill_(0.)
+        self.layer.bias.data.fill_(0.)
         
     def forward(self, x):
-        x = self.fc(x)
-        return x
+        """
+        Perform forward pass on the network.
+        
+        Args:
+            x (tensor): The input tensor.
+            
+        Returns:
+            tensor: The output tensor.
+        """
+        x = self.layer(x)
+        x[:, self.sim_idcs] = torch.tanh(self.sigma_ampl*x[:,self.sim_idcs])
+        x[:, self.nsim_idcs] = torch.sigmoid(self.sigma_ampl*x[:,self.nsim_idcs])
+
+        means = x[:,:self.output_size]
+        sigms = torch.sigmoid(self.sigma_ampl*x[:,self.output_size:])
+        return torch.cat([means, sigms], dim=1)
 
 class Evaluator(torch.nn.Module):
     def __init__(self, input_size):
+        """
+        Initialize the Evaluator class.
+        
+        Args:
+            input_size (int): The size of the input.
+        """
         super(Evaluator, self).__init__()
-        self.fc = torch.nn.Linear(input_size, 1)
+        self.layer = torch.nn.Linear(input_size, 1)
+        self.layer.weight.data.fill_(0.)
+        self.layer.bias.data.fill_(0.)
         
     def forward(self, x):
-        x = self.fc(x)
-        return x
-
-def select_action(network, state):
-    ''' Selects an action given state
-    Args:
-    - network (Pytorch Model): neural network used in forward pass
-    - state (Array): environment state
-    
-    Return:
-    - action.items (Array): continuous action
-    - noise (Array): noise added to get stochastic action 
-    
-    '''
-    
-    #create state tensor
-    state_tensor = torch.from_numpy(state.copy()).float().unsqueeze(0).to(DEVICE)
-    state_tensor.required_grad = True
-    
-    #forward pass through network
-    action_parameters = network(state_tensor)
-    
-    action_mean = action_parameters[:,:2]
-    noise_sigma = torch.exp(action_parameters[:,2:])
-    #get normal distribution
-    m = Normal(action_mean, noise_sigma)
-
-    #sample action, get log probability
-    action = m.sample()
-    noise = action - action_mean
-    action_items = action.cpu().detach().numpy().ravel()
-
-    return action_items, noise
-
-def get_value(network, state):
-    ''' Gives a value given state
-    Args:
-    - network (Pytorch Model): neural network used in forward pass
-    - state (Array): environment state
-    
-    Return:
-    - value (float): current value of the state
-    
-    '''
-    #create state tensor
-    state_tensor = torch.from_numpy(state.copy()).float().unsqueeze(0).to(DEVICE)
-    state_tensor.required_grad = True
-    
-    #forward pass through network
-    value = network(state_tensor)
-
-    return value
-
-class FakeArena:
-
-    def __init__(self):
-
-        self.reward_radius = 0.04
-        self.reset()
-
-    def reset(self):
-        self.state = np.array([0.1, 0.1]) # 0.1*np.random.uniform(-1,1, 2)
-        self.direction = 1.*np.pi# 2*np.pi*np.random.uniform(-1, 1)
-
-    def step(self, action):
-
-        speed, direction = action
-        speed = 0.03*np.tanh(np.exp(speed)) 
+        """
+        Perform forward pass on the network.
         
-        self.direction += 1*(4*np.pi*np.tanh(direction) -self.direction)
-        self.state += speed*np.hstack([np.cos(self.direction), np.sin(self.direction)])
-        reward = 1*(np.linalg.norm(self.state) < self.reward_radius)
-        return self.state, reward
-
-# %%
+        Args:
+            x (tensor): The input tensor.
+            
+        Returns:
+            tensor: The output tensor.
+        """
+        x = self.layer(x)
+        value = x  
+        return value
 
 if __name__ == "__main__":
 
-    episodes = 2000
-    N = 2
-    stime = 40
-    lr = 0.06
-    gamma = 0.99
-    I_init = 1
-    noise_sigma_init = 0.1
-    plotting = True
-
-    history = {"episodes": np.zeros([episodes, stime, 2]), "scores": np.zeros(episodes)}
-
-    # create environment
-    arena = FakeArena()
-
-    # create perceptron
-    actor = Actor(N).to(DEVICE)
-    evaluator = Evaluator(N).to(DEVICE)
-
-    # Define the optimizer
-    ActorOptimizer = torch.optim.SGD(actor.parameters(), lr=lr)
-    EvaluatorOptimizer = torch.optim.SGD(evaluator.parameters(), lr=lr)
-
-   
-    if plotting:
-        plt.ion()
-        nose_length = 0.02
-        fig, ax = plt.subplots(1, 1, figsize=(6,6))
-        ax.set_xlim(-0.5, 0.5)
-        ax.set_ylim(-0.5, 0.5)
-        agent_pos = ax.scatter(0, 0, s=100, fc="white", ec="black", zorder=1)
-        agent_nose, = ax.plot([0, nose_length], [0, 0], c="black") 
-        agent_path, = ax.plot([0, 0], [0, 0], c="black")
-        ts = ax.text(.3, .3, "ts: 0")
-        preward = plt.Circle((0, 0), arena.reward_radius, color="green", zorder=0)
-        ax.add_patch(preward)
-
-    # Train the model
-    for episode in range(episodes):
+    def action_selection(actor, state, exploration = True):
         
-        I = I_init*np.exp(-5*episode/episodes)
+        # Get the action parameters from the actor
+        action_params = actor(state)
+        action_mean = action_params[:, 0]
+        action_std = action_params[:, 1]
 
-        score = 0
-        arena.reset()
-        state, reward = arena.step([0, 0])
+        if not exploration:
+            action_std = 0.01
+
+        # Create a normal distribution with the action mean and standard deviation
+        prob = torch.distributions.Normal(action_mean, action_std)
+
+        # Sample an action from the distribution
+        action = prob.sample()
+        log_action = prob.log_prob(action)
+
+        return action, log_action, (action_mean, action_std) 
+    
+    # Set hyperparameters
+    episodes = 200
+    stime = 200
+    lr = 0.4
+    gamma = 0.99
+    I = 1 
+
+    # Set up plot
+    plt.close("all")
+    fig, ax = plt.subplots(1, 1)
+    line, = ax.plot(0,0, c="black")
+    upp, = ax.plot(0,0, lw=0.4, c="black")
+    low, = ax.plot(0,0, lw=0.4, c="black")
+    ax.set_xlim(-stime*0.1, stime*1.1)
+    ax.set_ylim(-2, 2)
+
+    # Create actor and evaluator instances
+    actor = Actor(1, 1).to(DEVICE)
+    evaluator = Evaluator(1).to(DEVICE)
+
+    # Set up optimizers
+    actor_optimizer = torch.optim.SGD(actor.parameters(), lr=lr)
+    evaluator_optimizer = torch.optim.SGD(evaluator.parameters(), lr=lr)
+
+    # Set up history array
+    history = np.zeros([stime, 3])
+
+    # Training loop
+    for episode in range(episodes):
+
+        print(episode)
+        
+        # Randomly initialize the current state
+        c_state = np.random.uniform(-1, 1)
+        
+        # Convert current state to torch tensor
+        state = torch.tensor([[c_state]]).float().to(DEVICE)
+        
+        # Get the initial value of the state from the evaluator
+        prev_val = evaluator(state)
+
+        # Time step loop
         for t in range(stime):
             
-            prev_value = get_value(evaluator, state)
-
-            # Forward pass
-            action, noise = select_action(actor, state)
-            state, reward = arena.step(action)
-
-            value = get_value(evaluator, state)
-            if t == stime - 1: value *= 0
+            # Convert current state to torch tensor
+            state = torch.tensor([[c_state]]).float().to(DEVICE)
+                
+            # Perform action selection using the actor network
+            action, log_action, (action_mean, action_std) = action_selection(actor, state)
             
-            discounted_curr_value = reward + gamma*value 
-            td = discounted_curr_value - prev_value
+            # Update the current state based on the action
+            c_state += 0.2*action.cpu().item()
+            c_state = np.clip(c_state, -1, 1)
 
-            policy_loss = I*td*torch.mean(noise**2)
-            value_loss = I*mse_loss(discounted_curr_value, value) 
+            # Convert the new state to torch tensor
+            new_state = torch.tensor([[c_state]]).float().to(DEVICE)
             
-            history["episodes"][episode, t, :] = arena.state.copy()
+            # Get the value of the new state from the evaluator
+            val = evaluator(new_state)
             
-            # Backward pass
-            policy_loss.backward(retain_graph=True)
+            # Compute the reward
+            s = 0.04
+            r = np.exp(-0.5*(s**-2)*(c_state - 0.)**2) 
+            r = 1*(r>0.01)
+            
+            # Compute the temporal difference (TD) error
+            td = r + gamma*val.item() - prev_val.item()
+            
+            # Compute the policy loss and value loss
+            policy_loss = -td*I*log_action
+            value_loss = I*mse_loss(r + gamma*val, prev_val)
+            
+            # Update the actor's parameters
+            actor_optimizer.zero_grad()
+            policy_loss.backward()
+            actor_optimizer.step()
+            
+            # Update the evaluator's parameters
+            evaluator_optimizer.zero_grad()
             value_loss.backward(retain_graph=True)
+            evaluator_optimizer.step()
 
-            # Zero the gradients
-            ActorOptimizer.zero_grad()
-            EvaluatorOptimizer.zero_grad()
-            # Update the weights
-            ActorOptimizer.step()
-            EvaluatorOptimizer.step()
+            # Detach the states and values to prevent gradients from flowing backward
+            state.detach()
+            new_state.detach()
+            prev_val = val
+            
+            # Update the history array
+            std = action_std.item()
+            history[t] = np.ones(3)*c_state + [-std,0, std]
+        
+        # Update the plot every 20 episodes
+        if episode % 20 == 0:
+            line.set_data(range(stime), history[:, 1])
+            low.set_data(range(stime), history[:, 0])
+            upp.set_data(range(stime), history[:, 2])
+            plt.pause(0.1)
 
-            if plotting and episode%50==0:
-                agent_pos.set_offsets(arena.state)
-                agent_nose.set_data(np.vstack([
-                    arena.state,
-                    arena.state + 
-                    nose_length*np.array([
-                        np.cos(arena.direction), 
-                        np.sin(arena.direction)])
-                    ]).T)
-                history["episodes"][episode, :t].shape
-                agent_path.set_data(*history["episodes"][episode, :t].T)
-                ts.set_text(f"ts: {t}")
-                plt.pause(0.0001)
+    # Perform a final evaluation with action standard deviation fixed at 0.01
+    with torch.no_grad():
+        
+        c_state = np.random.uniform(-1, 1)
 
-                if reward > 0: 
-                    if plotting: plt.pause(0.1)
-
-            if reward > 0: 
-                history["scores"][episode] += 1
-
-        print(episode, history["scores"][episode])
+        # Time step loop
+        for t in range(stime):
+            
+            state = torch.tensor([[c_state]]).float().to(DEVICE)
+            action, _, (action_mean, action_std) = action_selection(actor, state, exploration=False)
+            c_state += 0.2*action.cpu().item()
+            c_state = np.clip(c_state, -1, 1)
+            new_state = torch.tensor([[c_state]]).float().to(DEVICE)
+            state.detach()
+            std = action_std
+            history[t] = np.ones(3)*c_state + [-std,0, std]
+        
+        line.set_data(range(stime), history[:, 1])
+        low.set_data(range(stime), history[:, 0])
+        upp.set_data(range(stime), history[:, 2])
+        plt.pause(0.1)
+        input()

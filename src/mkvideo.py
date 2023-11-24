@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import os
 from PIL import Image
 import glob
+import shutil
 
 
 class vidManager:
@@ -60,13 +61,16 @@ class vidManager:
             name = self.name
         if dirname is None:
             dirname = self.dirname
-
+        
+        tmpdir = "/tmp"
+        tmp_vid_path = tmpdir + os.sep + name + '.gif'
         self.vid_path = dirname + os.sep + name + '.gif'
-        self.frames[0].save(dirname + os.sep + name + '.gif',
+        self.frames[0].save(tmp_vid_path,
                        format='GIF',
                        append_images=self.frames[1:],
                        save_all=True,
                        duration=self.duration, loop=0)
+        shutil.move(tmp_vid_path, self.vid_path)
 
 
 
