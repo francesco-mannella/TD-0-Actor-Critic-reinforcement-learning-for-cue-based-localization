@@ -333,9 +333,9 @@ class GraphArena(ArenaEnv):
         
         plt.close(self.fig)
 
-    def reset(self, *args, **kargs):
+    def reset(self, *args, save=True, **kargs):
     
-        if hasattr(self, "offline"):
+        if hasattr(self, "offline") and save==True:
             if self.offline:
                 if len(self.vm.frames) > 0:
                     self.vm.mk_video()

@@ -7,8 +7,7 @@ from torch.distributions import Normal
 from torch.nn.functional import mse_loss
 from agent import Actor, Evaluator
 from simulator import GraphArena, ArenaEnv
-#matplotlib.use("agg")
-
+matplotlib.use("agg")
 plt.ion()
 
 #device to run model on 
@@ -69,11 +68,9 @@ arena = ArenaEnv()
 # Set hyperparameters
 N = np.prod(arena.retina_dims)
 stime = 200
-lr = 0.002
 
 
 # Create actor and evaluator instances
-
 actor = Actor(N, 2, symmetry=(1, 0)).to(DEVICE)
 evaluator = Evaluator(N).to(DEVICE)
 
@@ -84,11 +81,11 @@ evaluator.load_state_dict(torch.load("evaluator_params", map_location=DEVICE)())
 
 # Initialize simulation
 arena = create_or_switch_environment(arena)
-if type(arena) == GraphArena: arena.offline = False
 
-for episode in range(20):
+for episode in range(50):
 
     c_state = arena.reset(*set_position_an_direction())
+    os.rename("episode.gif", f"episode-{episode:03d}.gif")
 
     # Time step loop
     for t in range(stime):
@@ -107,5 +104,8 @@ for episode in range(20):
 
         if reward > 0:
             break
+
+arena.close()
+
 
 
