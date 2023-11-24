@@ -29,11 +29,37 @@ def hinton(matrix, max_weight=None, ax=None):
     ax.invert_yaxis()
 
 
-actor_params = torch.load("actor_params", map_location=DEVICE)()
-eval_params = torch.load("evaluator_params", map_location=DEVICE)()
+actor_params = torch.load("params/actor_params", map_location=DEVICE)()
+eval_params = torch.load("params/evaluator_params", map_location=DEVICE)()
 
-fig, axes = plt.subplots(2,2)
+fig, axes = plt.subplots(3,2, figsize=(20, 15))
+actor_maps = actor_params["layer.weight"] 
+evaluator_map = eval_params["layer.weight"] 
+
+titles = [
+        "Weights of the speed actuator",
+        "Weights of the rotation actuator",
+        "Weights for the control of noise in speed response",
+        "Weights for the control of noise in rotation response",
+        "Weights for the state evaluation",
+        ]
+
 for i in range(2):
     for j in range(2):
-        hinton(actor_params["layer.weight"][i*2 + j].reshape(50, 80).T, ax=axes[i, j])
-plt.show()
+        curmap = actor_maps[j*2 + i]
+        curmap = curmap.reshape(50, 80).T
+        ax = axes[i, j]
+        ax.set_title(titles[j*2 + i])
+        hinton(curmap, ax=ax)
+
+curmap = evaluator_map
+curmap = curmap.reshape(50, 80).T
+ax = axes[2, 0]
+ax.set_title(titles[-1])
+hinton(curmap, ax=ax)
+
+ax = axes[2, 1]
+ax.set_axis_off()
+
+fig.tight_layout()
+fig.savefig("analysis.png", dpi=400)

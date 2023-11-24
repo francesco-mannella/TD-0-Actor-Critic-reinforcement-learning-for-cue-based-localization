@@ -333,16 +333,15 @@ class GraphArena(ArenaEnv):
         
         plt.close(self.fig)
 
-    def reset(self, *args, save=True, **kargs):
-    
-        if hasattr(self, "offline") and save==True:
+    def reset(self, *args, **kargs):
+        return super(GraphArena, self).reset(*args, **kargs)
+
+    def save(self, filename=None):
+        if hasattr(self, "offline"):
             if self.offline:
                 if len(self.vm.frames) > 0:
-                    self.vm.mk_video()
+                    self.vm.mk_video(name=filename)
                     self.vm.frames = []
-
-        return super(GraphArena, self).reset(*args, **kargs)
-        
 
     def step(self, *args, **kargs):
 

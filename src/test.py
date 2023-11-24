@@ -74,8 +74,8 @@ stime = 200
 actor = Actor(N, 2, symmetry=(1, 0)).to(DEVICE)
 evaluator = Evaluator(N).to(DEVICE)
 
-actor.load_state_dict(torch.load("actor_params", map_location=DEVICE)())
-evaluator.load_state_dict(torch.load("evaluator_params", map_location=DEVICE)())
+actor.load_state_dict(torch.load("params/actor_params", map_location=DEVICE)())
+evaluator.load_state_dict(torch.load("params/evaluator_params", map_location=DEVICE)())
 
 # %%
 
@@ -85,7 +85,6 @@ arena = create_or_switch_environment(arena)
 for episode in range(50):
 
     c_state = arena.reset(*set_position_an_direction())
-    os.rename("episode.gif", f"episode-{episode:03d}.gif")
 
     # Time step loop
     for t in range(stime):
@@ -104,7 +103,7 @@ for episode in range(50):
 
         if reward > 0:
             break
-
+arena.save("demo")
 arena.close()
 
 
