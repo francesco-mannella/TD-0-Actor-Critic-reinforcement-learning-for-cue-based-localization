@@ -1,13 +1,13 @@
 # chick
 
-<table class="tg">
+<table>
 <tbody>
   <tr>
-    <td class="tg-0pky"><img wdth="30%" src="docs/demo.gif" />
-    <td class="tg-0pky"><img wdth="70%" src="docs/model.png" />
+    <td><img  src="docs/demo.gif" width="300">
+    <td><img src="docs/model.png" width="510">
   </tr>
   <tr>
-    <td class="tg-0pky" colspan="2"><img wdth="100%" src="docs/analysis.png" /> </td>
+    <td  colspan="2"><img width="840" src="docs/analysis.png"> </td>
   </tr>
 </tbody>
 
