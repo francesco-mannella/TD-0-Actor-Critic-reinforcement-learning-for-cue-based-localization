@@ -1,4 +1,4 @@
-# A neural-network reinforcement-learning model of domestic chicks that learn to localize the centre of closed arenas
+#  TD(0) Actor-Critic reinforcement learning for cue-based localization
 
 The code is a neural network implementation of the TD(0) Actor-Critic reinforcement learning architecture. The model is based on the work in [Francesco Mannella & Gianluca Baldassarre (2006)](https://royalsocietypublishing.org/doi/10.1098/rstb.2006.1966), which aims to reproduce and understand the behaviors of domestic chicks in experiments where they are trained to locate food in different-sized arenas. The model provides insights into the chicks' navigation behaviors and suggests possible cognitive mechanisms underlying their actions. 
 
