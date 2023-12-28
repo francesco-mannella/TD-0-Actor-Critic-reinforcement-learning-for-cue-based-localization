@@ -25,19 +25,6 @@ def set_position_an_direction(origin=None):
     return position, direction
 
 
-def create_or_switch_environment(arena):
-    if os.path.exists("PLOT"):
-        if type(arena) == ArenaEnv:
-            garena = GraphArena()
-            garena.copy(arena)
-            arena = garena
-    else:
-        if type(arena) == GraphArena:
-            ngarena = ArenaEnv()
-            ngarena.copy(arena)
-            arena.close()
-            arena = ngarena
-    return arena
 
 def action_selection(actor, state, exploration = True):
 
@@ -63,7 +50,7 @@ def action_selection(actor, state, exploration = True):
     return action.ravel().tolist(), action_mean.ravel().tolist(), action_std.ravel().tolist()
 
 # Initialize arena
-arena = ArenaEnv()
+arena = GraphArena()
 
 # Set hyperparameters
 N = np.prod(arena.retina_dims)
@@ -79,8 +66,6 @@ evaluator.load_state_dict(torch.load("params/evaluator_params", map_location=DEV
 
 # %%
 
-# Initialize simulation
-arena = create_or_switch_environment(arena)
 
 for episode in range(50):
 

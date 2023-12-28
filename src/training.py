@@ -67,7 +67,7 @@ arena = ArenaEnv()
 
 # Set hyperparameters
 N = np.prod(arena.retina_dims)
-episodes = 5000
+episodes = 500
 stime = 200
 lr = 0.002
 gamma = 0.99

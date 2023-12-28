@@ -327,7 +327,7 @@ class GraphArena(ArenaEnv):
         self.g_reward = Circle(self.reward, self.reward_radius, zorder=-1)
         self.axes[1].add_patch(self.g_reward)
 
-        self.vm = mkvideo.vidManager(self.fig,"episode", ".", 50)
+        self.vm = mkvideo.vidManager(self.fig,"episode", ".", 200)
 
     def close(self):
         
